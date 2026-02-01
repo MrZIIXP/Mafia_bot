@@ -22,7 +22,7 @@ class Game(Base):
 
    id	= Column(Integer, primary_key=True)	
    player_count = Column(Integer, default=1)
-
+   status = Column(String, default='waiting')
 
 
 
