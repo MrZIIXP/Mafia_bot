@@ -21,7 +21,8 @@ from db import Game, Users, engine
 
 # ID of active game, end send all user in game
 server_chat: dict[int, dict] = {}
-roles = ['Mafia', 'Sherif', 'Doctor', 'Villager', 'Villager', 'Villager', 'Mafia', 'Villager', 'Villager', 'Villager'] # Max 10 users
+roles = ['Mafia', 'Sherif', 'Doctor', 'Villager', 'Villager', 'Villager',
+         'Villager', 'Villager', 'Villager', 'Villager']  # Max 10 users
 
 dp = Dispatcher()
 command = [
@@ -103,7 +104,7 @@ async def join_game(call: CallbackQuery):
         ])
         await call.answer(text='You are leave')
         await call.message.edit_reply_markup(reply_markup=markup)
-        
+
     else:
         markup = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(
@@ -131,11 +132,12 @@ async def join_game(call: CallbackQuery):
                     pass
 
             for user_id in server_chat[game_id]['players'].keys():
-                user = session.query(Users).filter(Users.tg_id == user_id).first()
-                
+                user = session.query(Users).filter(
+                    Users.tg_id == user_id).first()
+
                 random_role = random.choice(roleq)
                 roleq.remove(random_role)
-                
+
                 user.roles = random_role
                 user.active_game = game_id
                 session.commit()
@@ -144,7 +146,7 @@ async def join_game(call: CallbackQuery):
             game.player_count = len(server_chat[game.id]['players'])
             game.status = 'in_game'
             session.commit()
-            
+
             for user_id in server_chat[game_id]['players']:
                 await bot.send_message(
                     chat_id=user_id,
@@ -160,7 +162,6 @@ async def join_game(call: CallbackQuery):
         server_chat[game_id]['starting'] = False
 
 
-
 async def start_night_phase(game_id: int):
     players = server_chat[game_id]['players']
     roleq = ('Mafia', 'Doctor', 'Sherif')
@@ -170,7 +171,7 @@ async def start_night_phase(game_id: int):
         if user.roles in roleq:
             await send_night_action(game_id, user)
 
-    await asyncio.sleep(30)
+    await asyncio.sleep(10)
 
     for user_id in players:
         user = session.query(Users).filter(Users.tg_id == user_id).first()
@@ -183,6 +184,7 @@ async def start_night_phase(game_id: int):
 
     server_chat[game_id]['night']['finished'] = True
     await resolve_night(game_id)
+
 
 async def send_night_action(game_id: int, user: Users):
     buttons = []
@@ -217,36 +219,95 @@ async def send_night_action(game_id: int, user: Users):
             text=f'Твоя роль: {user.roles}. Ты не можешь ничего выбрать'
         )
 
+
 async def resolve_night(game_id: int):
     actions = server_chat[game_id]['night']['actions']
-    results = []
+    players = server_chat[game_id]['players']
+
+    mafia_target = None
+    doctor_target = None
+    sherif_target = None
+    sherif_id = None
+    night_log = []
 
     for user_id, action in actions.items():
-        role = action['role']
-        target = action['target']
+        if action['role'] == 'Mafia':
+            mafia_target = action['target']
+            if mafia_target:
+                night_log.append(f'Mafia нацелился на {players[mafia_target]}')
+            else:
+                night_log.append('Mafia ничего не выбрала')
 
-        if role == 'Mafia' and target:
-            results.append(
-                f"Mafia убил {server_chat[game_id]['players'][target]}"
-            )
-        elif role == 'Doctor' and target:
-            results.append(
-                f"Doctor вылечил {server_chat[game_id]['players'][target]}"
-            )
-        elif role == 'Sherif' and target:
-            results.append(
-                f"Sherif арестовал {server_chat[game_id]['players'][target]}"
-            )
+        elif action['role'] == 'Doctor':
+            doctor_target = action['target']
+            if doctor_target:
+                night_log.append(f'Doctor собирается вылечить {players[doctor_target]}')
+            else:
+                night_log.append('Doctor ничего не выбрал')
+
+        elif action['role'] == 'Sherif':
+            sherif_target = action['target']
+            sherif_id = user_id
+            if sherif_target:
+                night_log.append(f'Sherif хочет арестовать {players[sherif_target]}')
+            else:
+                night_log.append('Sherif ничего не выбрал')
+
+
+    dead_players = set()
+    arrested_players = set()
+    finile_log = []
+
+    if mafia_target:
+        if doctor_target != mafia_target:
+            dead_players.add(mafia_target)
+            finile_log.append(f'Mafia убил {players[mafia_target]}')
         else:
-            results.append(f"{role} ничего не выбрал")
+            finile_log.append(f'Mafia попыталась убить {players[mafia_target]}, но Doctor его спас')
+    
+    # Потом шериф
+    if sherif_target:
+        target_role = session.query(Users).filter(Users.tg_id == sherif_target).first().roles
+        if target_role == 'Mafia' and mafia_target != sherif_id:  
+            finile_log.append('Sherif арестовал Mafia')
+            arrested_players.add(sherif_target)
+        elif target_role == 'Mafia' or mafia_target == sherif_id:  
+            dead_players.add(sherif_id)
+            finile_log.append("Sherif нашёл Mafia но не успел арестовать, он умер")
+        else:
+            arrested_players.add(sherif_target)
+            finile_log.append(f'Sherif арестовал {players[sherif_target]}')
+    
+    # --- ИТОГОВЫЕ ВЫБЫВШИЕ ---
+    eliminated = dead_players | arrested_players
 
-    text = "🌅 Ночь закончилась\n\n" + "\n".join(results)
+    # --- лог ---
+    for uid in eliminated:
+        role = session.query(Users).filter(Users.tg_id == uid).first().roles
+        finile_log.append(f"❌ {players[uid]} ({role}) выбыл")
 
-    for user_id in server_chat[game_id]['players']:
-        await bot.send_message(user_id, text)
+
+    # --- текст ---
+    if not night_log:
+        text = "🌅 Ночь прошла спокойно. Никто не выбыл."
+    else:
+        text = "🌅 Что собирались делать этой ночю:\n\n" + "\n".join(night_log)
+        text2 = 'Итоги ночи:\n\n' + '\n'.join(finile_log)
 
 
+    for uid in server_chat[game_id]['players']:
+        await bot.send_message(uid, text)
+        await bot.send_message(uid, text2)
 
+    # --- удаляем игроков ---
+    for uid in eliminated:
+        if uid in server_chat[game_id]['players']:
+            del server_chat[game_id]['players'][uid]
+
+        user = session.query(Users).filter(Users.tg_id == uid).first()
+        user.active_game = None
+        user.roles = None
+        session.commit()
 
 @dp.callback_query(F.data.startswith('night.'))
 async def night_action(call: CallbackQuery):
@@ -280,7 +341,9 @@ async def night_action(call: CallbackQuery):
 class Game_id(StatesGroup):
     game_id = State()
 
+
 """Joining in game"""
+
 
 @dp.message(Command('join_game'))
 async def join_games(message: Message, state: FSMContext):
@@ -314,7 +377,6 @@ async def get_game_id(message: Message, state: FSMContext):
                     }
                 }
 
-            
             game = r
             markup = InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(
