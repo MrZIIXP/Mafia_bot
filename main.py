@@ -61,11 +61,17 @@ async def create_game(message: Message):
     session.add(game)
     session.commit()
 
+    # В server_chat[game_id] будем хранить:
     server_chat[game.id] = {
         'chats': {
             'start_chats': {}
-        },  # Для хранения chat_id: message_id
-        'players': {},# Для хранения user_id: username
+        },
+        'players': {},          # user_id: username
+        'starting': False,
+        'night': {
+            'actions': {},      # user_id: {'role': role, 'target': user_id | None}
+            'finished': False
+        }
     }
 
     markup = InlineKeyboardMarkup(inline_keyboard=[
@@ -138,8 +144,137 @@ async def join_game(call: CallbackQuery):
             game.player_count = len(server_chat[game.id]['players'])
             game.status = 'in_game'
             session.commit()
+            
+            for user_id in server_chat[game_id]['players']:
+                await bot.send_message(
+                    chat_id=user_id,
+                    text="🌙 Ночь наступает. Город засыпает..."
+                )
+
+            server_chat[game_id]['night'] = {
+                'actions': {},
+                'finished': False
+            }
+            await start_night_phase(game_id)
     else:
         server_chat[game_id]['starting'] = False
+
+
+
+async def start_night_phase(game_id: int):
+    players = server_chat[game_id]['players']
+    roleq = ('Mafia', 'Doctor', 'Sherif')
+
+    for user_id in players:
+        user = session.query(Users).filter(Users.tg_id == user_id).first()
+        if user.roles in roleq:
+            await send_night_action(game_id, user)
+
+    await asyncio.sleep(30)
+
+    for user_id in players:
+        user = session.query(Users).filter(Users.tg_id == user_id).first()
+        if user.roles in roleq:
+            if user_id not in server_chat[game_id]['night']['actions']:
+                server_chat[game_id]['night']['actions'][user_id] = {
+                    'role': user.roles,
+                    'target': None
+                }
+
+    server_chat[game_id]['night']['finished'] = True
+    await resolve_night(game_id)
+
+async def send_night_action(game_id: int, user: Users):
+    buttons = []
+    if user.roles in ('Mafia', 'Doctor', 'Sherif'):
+        for target_id, username in server_chat[game_id]['players'].items():
+            if target_id == user.tg_id:
+                continue
+            buttons.append([
+                InlineKeyboardButton(
+                    text=username,
+                    callback_data=f"night.{game_id}.{target_id}"
+                )
+            ])
+
+        buttons.append([
+            InlineKeyboardButton(
+                text="Ничего не выбирать",
+                callback_data=f"night.{game_id}.none"
+            )
+        ])
+
+        markup = InlineKeyboardMarkup(inline_keyboard=buttons)
+
+        await bot.send_message(
+            chat_id=user.tg_id,
+            text=f"Твоя роль: {user.roles}\nВыбери цель:",
+            reply_markup=markup
+        )
+    else:
+        await bot.send_message(
+            chat_id=user.tg_id,
+            text=f'Твоя роль: {user.roles}. Ты не можешь ничего выбрать'
+        )
+
+async def resolve_night(game_id: int):
+    actions = server_chat[game_id]['night']['actions']
+    results = []
+
+    for user_id, action in actions.items():
+        role = action['role']
+        target = action['target']
+
+        if role == 'Mafia' and target:
+            results.append(
+                f"Mafia убил {server_chat[game_id]['players'][target]}"
+            )
+        elif role == 'Doctor' and target:
+            results.append(
+                f"Doctor вылечил {server_chat[game_id]['players'][target]}"
+            )
+        elif role == 'Sherif' and target:
+            results.append(
+                f"Sherif арестовал {server_chat[game_id]['players'][target]}"
+            )
+        else:
+            results.append(f"{role} ничего не выбрал")
+
+    text = "🌅 Ночь закончилась\n\n" + "\n".join(results)
+
+    for user_id in server_chat[game_id]['players']:
+        await bot.send_message(user_id, text)
+
+
+
+
+@dp.callback_query(F.data.startswith('night.'))
+async def night_action(call: CallbackQuery):
+    _, game_id, target = call.data.split('.')
+    game_id = int(game_id)
+    user_id = call.from_user.id
+
+    if server_chat[game_id]['night']['finished']:
+        await call.answer("Ночь уже закончилась", show_alert=True)
+        return
+
+    user = session.query(Users).filter(Users.tg_id == user_id).first()
+
+    if target == 'none':
+        server_chat[game_id]['night']['actions'][user_id] = {
+            'role': user.roles,
+            'target': None
+        }
+        await call.answer("Ты ничего не выбрал")
+    else:
+        target = int(target)
+        server_chat[game_id]['night']['actions'][user_id] = {
+            'role': user.roles,
+            'target': target
+        }
+        await call.answer("Выбор сохранён")
+
+    await call.message.edit_reply_markup(reply_markup=None)
 
 
 class Game_id(StatesGroup):
@@ -166,12 +301,19 @@ async def get_game_id(message: Message, state: FSMContext):
             return
         if r:
             if r.id not in server_chat.keys():
+                # В server_chat[game_id] будем хранить:
                 server_chat[r.id] = {
-            'chats': {
-                'start_chats': {}
-            },  # Для хранения chat_id: message_id
-            'players': {}  # Для хранения user_id: username
-            }
+                    'chats': {
+                        'start_chats': {}
+                    },
+                    'players': {},          # user_id: username
+                    'starting': False,
+                    'night': {
+                        'actions': {},      # user_id: {'role': role, 'target': user_id | None}
+                        'finished': False
+                    }
+                }
+
             
             game = r
             markup = InlineKeyboardMarkup(inline_keyboard=[
