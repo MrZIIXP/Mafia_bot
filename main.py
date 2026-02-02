@@ -265,7 +265,6 @@ async def resolve_night(game_id: int):
         else:
             finile_log.append(f'Mafia попыталась убить {players[mafia_target]}, но Doctor его спас')
     
-    # Потом шериф
     if sherif_target:
         target_role = session.query(Users).filter(Users.tg_id == sherif_target).first().roles
         if target_role == 'Mafia' and mafia_target != sherif_id:  
@@ -278,16 +277,13 @@ async def resolve_night(game_id: int):
             arrested_players.add(sherif_target)
             finile_log.append(f'Sherif арестовал {players[sherif_target]}')
     
-    # --- ИТОГОВЫЕ ВЫБЫВШИЕ ---
     eliminated = dead_players | arrested_players
 
-    # --- лог ---
     for uid in eliminated:
         role = session.query(Users).filter(Users.tg_id == uid).first().roles
         finile_log.append(f"❌ {players[uid]} ({role}) выбыл")
 
 
-    # --- текст ---
     if not night_log:
         text = "🌅 Ночь прошла спокойно. Никто не выбыл."
     else:
@@ -299,7 +295,6 @@ async def resolve_night(game_id: int):
         await bot.send_message(uid, text)
         await bot.send_message(uid, text2)
 
-    # --- удаляем игроков ---
     for uid in eliminated:
         if uid in server_chat[game_id]['players']:
             del server_chat[game_id]['players'][uid]
