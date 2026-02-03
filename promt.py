@@ -1,4 +1,5 @@
-AI_PROMT_CODE = """import asyncio
+AI_PROMT_CODE = """
+import asyncio
 import os
 
 from aiogram import Bot, Dispatcher, F
@@ -166,42 +167,6 @@ async def join_game(call: CallbackQuery):
             text='Start game', callback_data=f'begin_game.{game_id}')])
 
     await bot.edit_message_text(text=text, chat_id=server_chat[game_id]['created_by'][0], message_id=server_chat[game_id]['chats']['start_chats'][server_chat[game_id]['created_by'][0]], reply_markup=markup_start_game)
-    # user_len = len(server_chat[game_id]['players'])
-    # roleq = roles[:user_len:]
-    # for chat_id, message_id in server_chat[game_id]['chats']['start_chats'].items():
-    #     try:
-    #         await bot.delete_message(chat_id=chat_id, message_id=message_id)
-    #     except:
-    #         pass
-
-    # for user_id in server_chat[game_id]['players'].keys():
-    #     user = session.query(Users).filter(
-    #         Users.tg_id == user_id).first()
-
-    #     random_role = random.choice(roleq)
-    #     roleq.remove(random_role)
-
-    #     user.roles = random_role
-    #     user.active_game = game_id
-    #     session.commit()
-    #     await bot.send_message(chat_id=user.tg_id, text=f'U`r role is {random_role}')
-    # game = session.query(Game).filter(Game.id == game_id).first()
-    # game.player_count = len(server_chat[game.id]['players'])
-    # game.status = 'in_game'
-    # session.commit()
-
-    # for user_id in server_chat[game_id]['players']:
-    #     await bot.send_message(
-    #         chat_id=user_id,
-    #         text="🌙 Ночь наступает. Город засыпает..."
-    #     )
-
-    # server_chat[game_id]['night'] = {
-    #     'actions': {},
-    #     'finished': False
-    # }
-    # await start_night_phase(game_id)
-
 
 @dp.callback_query(F.data.startswith('begin_game.'))
 async def begin_game(call: CallbackQuery):
@@ -423,9 +388,6 @@ async def night_action(call: CallbackQuery):
     await call.message.edit_reply_markup(reply_markup=None)
 
 
-"Joining in game"
-
-
 @dp.callback_query(F.data == 'join_game')
 async def join_games(call: CallbackQuery):
     r = session.query(Game).filter(Game.status == 'waiting').all()
@@ -484,6 +446,7 @@ async def get_game_id(call: CallbackQuery):
             # server_chat[game.id]['players'][message.from_user.id] = message.from_user.username
             server_chat[game.id]['chats']['start_chats'][mess.chat.id] = mess.message_id
 
+from promt import AI_PROMT_CODE
 
 @dp.message()
 async def groq(message: Message):
@@ -491,18 +454,21 @@ async def groq(message: Message):
         Users.tg_id == message.from_user.id).first()
 
     if not user.active_game:
-        action = client.chat.completions.create(
-            model='openai/gpt-oss-120b',
-            messages=[
-                {
-                    'role': 'system',
-                    'content': 'Ты помощник по игре Mafia. Объясняй правила, роли и механику.'
-                },
-                {'role': 'user', 'content': message.text}
-            ],
-            max_tokens=500
-        )
-        await message.answer(action.choices[0].message.content)
+        try:
+            action = client.chat.completions.create(
+                model='openai/gpt-oss-120b',
+                messages=[
+                    {
+                        'role': 'system',
+                        'content': f'Ты помощник по игре Mafia. Объясняй правила, роли и механику. Не отвечай практически ни на какие сообщение, если они не связаны с игрой в мафией. Вот исходный код, правила рассказывай относительно этого кода(не говори про регистрацию и прочее под копотом) ещё раз говорю, не рассказывай код, рассказывай правила, а не код, и пиши максимольно коротко, очень предложений 1-3 достаточно: {AI_PROMT_CODE}'
+                    },
+                    {'role': 'user', 'content': message.text}
+                ],
+                max_tokens=500
+            )
+            await message.answer(action.choices[0].message.content)
+        except Exception as e:
+            print(e)
         return
 
     game_id = user.active_game
@@ -520,21 +486,25 @@ async def groq(message: Message):
 
     players = ', '.join(game['players'].values())
     players_id = game['players']
-    action = client.chat.completions.create(
-        model='openai/gpt-oss-120b',
-        messages=[
-            {
-                'role': 'system',
-                'content': (
-                    'Ты игрок в Mafia. Веди себя как человек. '
-                    'Подозревай игроков, анализируй, но не раскрывай роли.\n'
-                    f'Игроки: [{players}]'
-                )
-            },
-            {'role': 'user', 'content': message.text}
-        ],
-        max_tokens=500
-    )
+    try:
+        action = client.chat.completions.create(
+            model='openai/gpt-oss-120b',
+            messages=[
+                {
+                    'role': 'system',
+                    'content': (
+                        'Ты игрок в Mafia. Веди себя как человек. '
+                        'Подозревай игроков, анализируй, но не раскрывай роли.\n'
+                        f'Игроки: [{players}]'
+                        f'Вот исходный код, правила рассказывай относительно этого кода(не говори про регистрацию и прочее под копотом) ещё раз говорю, не рассказывай код, рассказывай правила, а не код, и пиши максимольно коротко, очень предложений 1-3 достаточно: {AI_PROMT_CODE}'
+                    )
+                },
+                {'role': 'user', 'content': message.text}
+            ],
+            max_tokens=100
+        )
+    except Exception as e:
+        print(e)
     for k in players_id.keys():
         await bot.send_message(text=f'GPT: {action.choices[0].message.content}', chat_id=k)
 
