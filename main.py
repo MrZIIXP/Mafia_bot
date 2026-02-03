@@ -28,10 +28,11 @@ roles = ['Mafia', 'Sherif', 'Doctor', 'Villager', 'Villager', 'Villager',
 dp = Dispatcher()
 command = [
     BotCommand(command='start', description='Start bot, and registration'),
+    BotCommand(command='stats', description='Show top 10 winners'),
 ]
 load_dotenv()
 TOKEN = os.getenv("TOKEN")  # bot token
-TOKEN_GROQ = os.getenv("TOKEN_GROQ")  # bot token
+TOKEN_GROQ = os.getenv("TOKEN_GROQ")  # ai token
 bot = Bot(TOKEN)
 client = Groq(api_key=TOKEN_GROQ)
 session = sessionmaker(engine)()
@@ -197,7 +198,6 @@ async def begin_game(call: CallbackQuery):
     game.status = 'in_game'
     session.commit()
 
-    # 🌙 Ночь
     server_chat[game_id]['is_day'] = False
     server_chat[game_id]['night'] = {
         'actions': {},
@@ -266,13 +266,13 @@ async def send_night_action(game_id: int, user: Users):
 
         await bot.send_message(
             chat_id=user.tg_id,
-            text=f"Твоя роль: {user.roles}\nВыбери {role_action}:",
+            text=f"🌙 НОЧЬ\nУ вас есть 30 секунд, чтобы сделать выбор. Твоя роль: {user.roles}\nВыбери {role_action}:",
             reply_markup=markup
         )
     else:
         await bot.send_message(
             chat_id=user.tg_id,
-            text=f'Твоя роль: {user.roles}. Ты не можешь ничего выбрать'
+            text=f'🌙 НОЧЬ\nУ вас есть 30 секунд, чтобы сделать выбор. Твоя роль: {user.roles}. Ты не можешь ничего выбрать'
         )
 
 
@@ -341,7 +341,10 @@ async def resolve_night(game_id: int):
 
     for uid in eliminated:
         role = session.query(Users).filter(Users.tg_id == uid).first().roles
-        finile_log.append(f"❌ {players[uid]} ({role}) выбыл")
+        finile_log.append(f"""☠️ *Игрок выбыл!*
+Имя: {players[uid]}
+Роль: {role}
+""")
 
     if not night_log:
         text = "🌅 Ночь прошла спокойно. Никто не выбыл."
@@ -362,16 +365,17 @@ async def resolve_night(game_id: int):
         user.roles = None
         session.commit()
 
-        if await check_game_end(game_id):
-            return
+    if await check_game_end(game_id):
+        return
 
-        server_chat[game_id]['is_day'] = True
-        server_chat[game_id]['day'] = {
-            'votes': {},
-            'finished': False
-        }
-        
-        await start_day_phase(game_id)
+    server_chat[game_id]['is_day'] = True
+    server_chat[game_id]['day'] = {
+        'votes': {},
+        'finished': False
+    }
+
+    await start_day_phase(game_id)
+
 
 async def start_day_phase(game_id: int):
     players = server_chat[game_id]['players']
@@ -388,12 +392,19 @@ async def start_day_phase(game_id: int):
                     callback_data=f"dayvote.{game_id}.{target_id}"
                 )
             ])
+        buttons.append([
+            InlineKeyboardButton(
+                text="🤷 Пропустить",
+                callback_data=f"dayvote.{game_id}.none"
+            )
+        ])
+
 
         markup = InlineKeyboardMarkup(inline_keyboard=buttons)
 
         await bot.send_message(
             voter_id,
-            "☀️ День наступил. Выбери, кого повесить:",
+            "☀️ ДЕНЬ\nУ вас есть 40 секунд для голосования. Выбери, кого повесить:",
             reply_markup=markup
         )
 
@@ -401,6 +412,7 @@ async def start_day_phase(game_id: int):
 
     if not server_chat[game_id]['day']['finished']:
         await resolve_day(game_id)
+
 
 async def resolve_day(game_id: int):
     day = server_chat[game_id]['day']
@@ -410,6 +422,8 @@ async def resolve_day(game_id: int):
 
     votes = {}
     for target in day['votes'].values():
+        if target == 'none':
+            continue
         votes[target] = votes.get(target, 0) + 1
 
     if not votes:
@@ -431,7 +445,7 @@ async def resolve_day(game_id: int):
     for uid in players:
         await bot.send_message(
             uid,
-            f"❌ {players[eliminated]} был повешен.\nЕго роль: {role}"
+            f"💀 {players[eliminated]} был повешен.\nЕго роль: {role}"
         )
 
     players.pop(eliminated)
@@ -452,6 +466,7 @@ async def resolve_day(game_id: int):
 
     await start_night_phase(game_id)
 
+
 @dp.callback_query(F.data.startswith('dayvote.'))
 async def day_vote(call: CallbackQuery):
     _, game_id, target_id = call.data.split('.')
@@ -468,7 +483,6 @@ async def day_vote(call: CallbackQuery):
 
     day['votes'][voter_id] = target_id
     await call.answer("Голос принят")
-
 
     if len(day['votes']) == len(server_chat[game_id]['players']):
         await resolve_day(game_id)
@@ -508,7 +522,8 @@ async def check_game_end(game_id: int):
         return True
 
     players = server_chat[game_id]['players']
-    user_objs = session.query(Users).filter(Users.tg_id.in_(players.keys())).all()
+    user_objs = session.query(Users).filter(
+        Users.tg_id.in_(players.keys())).all()
     roles_left = [u.roles for u in user_objs]
 
     if len(players) == 2:
@@ -538,6 +553,7 @@ async def finish_game(game_id: int):
 
     for uid in players:
         user = session.query(Users).filter(Users.tg_id == uid).first()
+        user.wins += 1
         user.active_game = None
         user.roles = None
         session.commit()
@@ -563,7 +579,8 @@ async def join_games(call: CallbackQuery):
             markup.inline_keyboard.append([InlineKeyboardButton(
                 text=f'{i.id} by {server_chat[i.id]['created_by'][1]}', callback_data=f'join.{i.id}')])
         else:
-            user = session.query(Users).filter(Users.tg_id == i.create_by).first()
+            user = session.query(Users).filter(
+                Users.tg_id == i.create_by).first()
             markup.inline_keyboard.append([InlineKeyboardButton(
                 text=f'{i.id} by {user.username}', callback_data=f'join.{i.id}')])
     await call.message.answer('All active games:\n\n', reply_markup=markup)
@@ -616,6 +633,30 @@ async def get_game_id(call: CallbackQuery):
             mess = await call.message.answer(f'''Game ID: {game.id}. Wait for some people\n{text}''', reply_markup=markup)
             # server_chat[game.id]['players'][message.from_user.id] = message.from_user.username
             server_chat[game.id]['chats']['start_chats'][mess.chat.id] = mess.message_id
+
+
+@dp.message(Command('stats'))
+async def stats(message: Message):
+    top_users = (
+        session.query(Users)
+        .order_by(Users.wins.desc())
+        .limit(10)
+        .all()
+    )
+
+    if not top_users:
+        await message.answer("📊 Статистика пока пуста.")
+        return
+
+    medals = ["🥇", "🥈", "🥉"]
+    text = "🏆 Топ 10 игроков по победам:\n\n"
+
+    for i, user in enumerate(top_users):
+        medal = medals[i] if i < 3 else f"{i+1}."
+        username = f"@{user.username}" if user.username else f"id:{user.tg_id}"
+        text += f"{medal} {username} — {user.wins} 🏆\n"
+
+    await message.answer(text)
 
 
 @dp.message()
@@ -681,8 +722,6 @@ async def groq(message: Message):
             print(e)
         for k in players_id.keys():
             await bot.send_message(text=f'GPT: {action.choices[0].message.content}', chat_id=k)
-
-
 
     if 'Bot' not in message.text or 'GPT' not in message.text:
         return
