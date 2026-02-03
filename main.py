@@ -563,8 +563,9 @@ async def join_games(call: CallbackQuery):
             markup.inline_keyboard.append([InlineKeyboardButton(
                 text=f'{i.id} by {server_chat[i.id]['created_by'][1]}', callback_data=f'join.{i.id}')])
         else:
+            user = session.query(Users).filter(Users.tg_id == i.create_by).first()
             markup.inline_keyboard.append([InlineKeyboardButton(
-                text=f'{i.id}', callback_data=f'join.{i.id}')])
+                text=f'{i.id} by {user.username}', callback_data=f'join.{i.id}')])
     await call.message.answer('All active games:\n\n', reply_markup=markup)
 
 

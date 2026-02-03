@@ -14,7 +14,7 @@ class Users(Base):
    username	= Column(String, nullable=False)
    roles = Column(String, nullable=True)
    active_game = Column(Integer, nullable=True)
-
+   wins = Column(Integer, default=0)
 
 
 class Game(Base):
